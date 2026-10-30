@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Test grafico AR</title>
+<script src="./aframe-1.5.0.min.js?t=1"></script>
+<script src="./mindar-image-aframe-1.2.5.prod.js?t=1"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #6b6b6b; font-family: system-ui, sans-serif; overflow: hidden; }
+  #gl { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; display: block; }
+  #grid { position: fixed; inset: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(4, 1fr);
+          pointer-events: none; padding-bottom: 120px; box-sizing: border-box; }
+  #grid div { border: 1px solid rgba(255,255,255,.35); position: relative; }
+  #grid b { position: absolute; left: 4px; top: 2px; color: #fff; background: #000; font-size: 18px; padding: 0 6px; border-radius: 4px; }
+  #info { position: fixed; left: 0; right: 0; bottom: 0; height: 120px; background: #111; color: #fff;
+          font-size: 12px; padding: 8px; box-sizing: border-box; line-height: 1.35; }
+  #info button { font-size: 14px; padding: 8px 12px; margin-top: 4px; border: 0; border-radius: 6px; background: #d2232a; color: #fff; }
+  video { position: fixed; width: 1px; height: 1px; opacity: 0; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="grid">
+  <div><b>A</b></div><div><b>B</b></div>
+  <div><b>C</b></div><div><b>D</b></div>
+  <div><b>E</b></div><div><b>F</b></div>
+  <div><b>G</b></div><div><b>H</b></div>
+</div>
+<div id="info">
+  <div id="gpu">GPU: …</div>
+  <div id="pix">Pixel: …</div>
+  <div id="st">Fase 1: senza fotocamera. Fai uno screenshot, poi premi il pulsante.</div>
+  <button id="go">Fase 2: avvia fotocamera + riconoscimento</button>
+</div>
+
+<script>
+(async function () {
+  const THREE = window.THREE;
+  const canvas = document.getElementById('gl');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setSize(innerWidth, innerHeight, false);
+  renderer.setClearColor(0x6b6b6b, 1);
+  renderer.autoClear = false;
+  renderer.setScissorTest(true);
+  if ('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+
+  const gl = renderer.getContext();
+  try {
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    document.getElementById('gpu').textContent = 'GPU: ' + (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) +
+      ' | WebGL' + (renderer.capabilities.isWebGL2 ? '2' : '1') + ' | ' + navigator.userAgent.replace(/.*Android/, 'Android').slice(0, 40);
+  } catch (e) {}
+
+  function loadImg(src) {
+    return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+  }
+  const img = await loadImg('./logo-consorzio.png?t=1');
+
+  // pixel letti dal canvas 2D (per sapere se il telefono legge l'immagine correttamente)
+  const c2 = document.createElement('canvas'); c2.width = img.naturalWidth; c2.height = img.naturalHeight;
+  const g2 = c2.getContext('2d', { willReadFrequently: true }); g2.drawImage(img, 0, 0);
+  const raw = g2.getImageData(0, 0, c2.width, c2.height).data;
+  { let s = 0, n = 0; for (let i = 0; i < raw.length; i += 400) if (raw[i + 3] > 128) { s += raw[i] + raw[i + 1] + raw[i + 2]; n++; }
+    document.getElementById('pix').textContent = 'Pixel letti: luminosità media ' + (n ? Math.round(s / n / 3) : 'n/d') + ' (deve essere > 50)'; }
+
+  function imgTex() { const t = new THREE.Texture(img); t.needsUpdate = true; t.generateMipmaps = false; t.minFilter = THREE.LinearFilter; return t; }
+  function dataTex() {
+    const w = c2.width, h = c2.height, row = w * 4, out = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++) out.set(raw.subarray(y * row, (y + 1) * row), (h - 1 - y) * row);
+    const t = new THREE.DataTexture(out, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
+    t.needsUpdate = true; t.minFilter = THREE.LinearFilter; t.unpackAlignment = 1; return t;
+  }
+  function canvasTex() { const t = new THREE.CanvasTexture(c2); t.generateMipmaps = false; t.minFilter = THREE.LinearFilter; return t; }
+
+  const rawMat = (tex) => new THREE.RawShaderMaterial({
+    uniforms: { map: { value: tex } },
+    vertexShader: 'precision highp float; attribute vec3 position; attribute vec2 uv; uniform mat4 modelViewMatrix; uniform mat4 projectionMatrix; varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: 'precision highp float; uniform sampler2D map; varying vec2 vUv; void main(){ vec4 c = texture2D(map, vUv); if (c.a < 0.5) discard; gl_FragColor = vec4(c.rgb, 1.0); }'
+  });
+
+  // 8 varianti
+  const variants = [
+    { k: 'A', m: () => new THREE.MeshBasicMaterial({ map: imgTex(), transparent: true }) },                       // come A-Frame di default
+    { k: 'B', m: () => new THREE.MeshBasicMaterial({ map: imgTex(), transparent: false, alphaTest: 0.5 }) },      // ritaglio netto
+    { k: 'C', m: () => new THREE.MeshBasicMaterial({ map: dataTex(), transparent: false, alphaTest: 0.5 }) },     // pixel grezzi (versione 7)
+    { k: 'D', m: () => rawMat(imgTex()) },                                                                        // shader minimo
+    { k: 'E', m: () => new THREE.MeshBasicMaterial({ map: imgTex(), transparent: false, alphaTest: 0.5 }), every: true }, // ricaricata ogni frame
+    { k: 'F', m: () => new THREE.MeshBasicMaterial({ map: canvasTex(), transparent: false, alphaTest: 0.5 }) },   // da canvas
+    { k: 'G', m: () => new THREE.MeshBasicMaterial({ color: 0xd2232a }) },                                        // senza immagine (controllo)
+    { k: 'H', m: () => new THREE.MeshBasicMaterial({ map: imgTex(), transparent: false, alphaTest: 0.5 }), big: true }  // coordinate grandi come MindAR
+  ];
+  variants.forEach(v => {
+    v.scene = new THREE.Scene();
+    v.mat = v.m();
+    const geo = new THREE.PlaneGeometry(1, 1);
+    v.mesh = new THREE.Mesh(geo, v.mat);
+    if (v.big) {
+      // simile alle scale usate da MindAR: unità in pixel, camera con near/far molto ampi
+      v.cam = new THREE.PerspectiveCamera(45, 1, 10, 100000);
+      v.mesh.scale.setScalar(985); v.mesh.position.z = -2200;
+    } else {
+      v.cam = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+      v.mesh.position.z = -2.2;
+    }
+    v.scene.add(v.mesh);
+  });
+
+  let t0 = performance.now();
+  function frame(now) {
+    const W = innerWidth, H = innerHeight - 120, cw = W / 2, ch = H / 4;
+    renderer.setScissor(0, 0, W, innerHeight); renderer.setViewport(0, 0, W, innerHeight); renderer.clear();
+    variants.forEach((v, i) => {
+      const col = i % 2, row = Math.floor(i / 2);
+      const x = col * cw, y = innerHeight - (row + 1) * ch;      // origine WebGL in basso
+      renderer.setViewport(x, y, cw, ch); renderer.setScissor(x, y, cw, ch);
+      v.cam.aspect = cw / ch; v.cam.updateProjectionMatrix();
+      v.mesh.rotation.y = Math.sin((now - t0) / 900) * 0.6;     // inclinazione, come una pagina vista di lato
+      v.mesh.rotation.x = -0.35;
+      if (v.every && v.mat.map) v.mat.map.needsUpdate = true;
+      renderer.render(v.scene, v.cam);
+    });
+    requestAnimationFrame(frame);
+  }
+  window.addEventListener('resize', () => renderer.setSize(innerWidth, innerHeight, false));
+  requestAnimationFrame(frame);
+
+  // Fase 2: avvia fotocamera + MindAR (tfjs) per vedere se qualcosa cambia
+  document.getElementById('go').addEventListener('click', async () => {
+    const st = document.getElementById('st');
+    st.textContent = 'Avvio fotocamera…';
+    try {
+      const video = document.createElement('video');
+      video.setAttribute('playsinline', ''); video.muted = true; video.autoplay = true;
+      document.body.appendChild(video);
+      video.srcObject = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment' } });
+      await new Promise(r => video.onloadedmetadata = r); await video.play();
+      const ctrl = new window.MINDAR.IMAGE.Controller({ inputWidth: video.videoWidth, inputHeight: video.videoHeight, maxTrack: 1 });
+      await ctrl.addImageTargets('./targets.mind?t=1');
+      await ctrl.dummyRun(video);
+      ctrl.processVideo(video);
+      st.textContent = 'Fase 2 ATTIVA (fotocamera + riconoscimento). Aspetta 5 secondi e fai il secondo screenshot.';
+    } catch (e) { st.textContent = 'Errore fase 2: ' + e.message; }
+  });
+})();
+</script>
+</body>
+</html>
