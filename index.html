@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#1a0f0a" />
+  <title>Salumi DOP Piacentini – AR</title>
+
+  <!-- Font simili a quelli della pagina stampata -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sorts+Mill+Goudy:ital@0;1&family=Montserrat:wght@600;700&display=swap" rel="stylesheet" />
+
+  <!-- Librerie incluse nel progetto (nessuna dipendenza da CDN) -->
+  <script src="./aframe-1.5.0.min.js?v=6"></script>
+  <script src="./mindar-image-aframe-1.2.5.prod.js?v=6"></script>
+
+  <style>
+    html { background: #000; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden;
+      touch-action: none;                 /* niente zoom/scroll del browser: il pinch lo gestiamo noi */
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+      background: transparent;            /* il video della fotocamera sta dietro al body */
+      font-family: "Montserrat", system-ui, sans-serif;
+    }
+    a-scene { position: fixed; inset: 0; }
+
+    /* Schermata di avvio */
+    #splash {
+      position: fixed; inset: 0; z-index: 30;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 22px; padding: 24px; box-sizing: border-box; text-align: center;
+      background: radial-gradient(ellipse at center, #3a2418 0%, #120a06 75%);
+      color: #f3e7cf;
+    }
+    #splash img { width: 150px; height: 150px; }
+    #splash h1 {
+      margin: 0; font-family: "Sorts Mill Goudy", Georgia, serif; font-weight: 400;
+      font-size: 26px; line-height: 1.2;
+    }
+    #splash p { margin: 0; font-size: 14px; opacity: .85; max-width: 320px; line-height: 1.45; }
+    #startBtn {
+      appearance: none; border: 0; cursor: pointer;
+      background: #d2232a; color: #fff; font: 700 16px "Montserrat", sans-serif;
+      padding: 15px 34px; border-radius: 40px; letter-spacing: .5px;
+      box-shadow: 0 6px 20px rgba(210,35,42,.45);
+    }
+    #startBtn:disabled { opacity: .6; }
+    #splash .err { color: #ffb4a8; font-size: 13px; display: none; }
+
+    /* Overlay di scansione */
+    #scanning {
+      position: fixed; inset: 0; z-index: 10; pointer-events: none;
+      display: flex; align-items: center; justify-content: center; flex-direction: column;
+    }
+    #scanning.hidden { display: none; }
+    #scanning .frame {
+      width: 62vmin; height: 86vmin; max-width: 330px; max-height: 470px;
+      border: 2px solid rgba(255,255,255,.75); border-radius: 18px;
+      position: relative; overflow: hidden;
+      box-shadow: 0 0 0 9999px rgba(0,0,0,.25);
+    }
+    #scanning .line {
+      position: absolute; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, transparent, #d2232a, transparent);
+      animation: scan 2.2s ease-in-out infinite;
+    }
+    @keyframes scan { 0%{top:0} 50%{top:calc(100% - 3px)} 100%{top:0} }
+    #scanning .txt {
+      margin-top: 18px; color: #fff; font-size: 14px; font-weight: 600;
+      background: rgba(0,0,0,.55); padding: 8px 16px; border-radius: 20px;
+    }
+
+    /* Suggerimento pinch + pulsante reset zoom */
+    #hint {
+      position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom));
+      transform: translateX(-50%); z-index: 12;
+      color: #fff; font-size: 13px; font-weight: 600;
+      background: rgba(0,0,0,.55); padding: 8px 16px; border-radius: 20px;
+      opacity: 0; transition: opacity .5s; pointer-events: none; white-space: nowrap;
+    }
+    #hint.show { opacity: 1; }
+    #resetZoom {
+      position: fixed; right: 16px; top: calc(16px + env(safe-area-inset-top)); z-index: 12;
+      appearance: none; border: 0; border-radius: 22px;
+      background: rgba(0,0,0,.55); color: #fff; font: 600 13px "Montserrat", sans-serif;
+      padding: 9px 14px; display: none;
+    }
+    #resetZoom.show { display: block; }
+
+    /* Nasconde i pulsanti VR/AR automatici di A-Frame (comparivano su Android) */
+    .a-enter-vr, .a-enter-ar, .a-enter-vr-button, .a-enter-ar-button, .a-orientation-modal { display: none !important; }
+
+    /* Pannello con il sito + pulsante "Torna alla realtà aumentata" */
+    #web {
+      position: fixed; inset: 0; z-index: 50; background: #fff;
+      display: none; flex-direction: column;
+    }
+    #web.open { display: flex; }
+    #webBar {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+      padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+      background: #1a0f0a; box-shadow: 0 2px 10px rgba(0,0,0,.35);
+    }
+    #backAR {
+      flex: 1 1 auto; appearance: none; border: 0; cursor: pointer;
+      background: #d2232a; color: #fff; font: 700 15px "Montserrat", sans-serif;
+      padding: 13px 14px; border-radius: 30px; letter-spacing: .2px;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      box-shadow: 0 4px 14px rgba(210,35,42,.45);
+    }
+    #openExt {
+      flex: 0 0 auto; color: #f3e7cf; font: 600 12px "Montserrat", sans-serif;
+      text-decoration: none; padding: 10px 6px; white-space: nowrap;
+    }
+    #webFrame { flex: 1 1 auto; width: 100%; border: 0; background: #fff; }
+    #webLoading {
+      position: absolute; left: 0; right: 0; top: 50%; text-align: center;
+      color: #555; font: 600 14px "Montserrat", sans-serif; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Avvio: serve un tocco dell'utente (iOS) per attivare la fotocamera -->
+  <div id="splash">
+    <img src="./logo-consorzio.png" alt="Consorzio Salumi DOP Piacentini" />
+    <h1>I grandi sapori<br/><em>delle terre piacentine</em></h1>
+    <p>Inquadra la pagina del libro con la fotocamera per scoprire i contenuti in realtà aumentata.</p>
+    <button id="startBtn">Avvia l'esperienza</button>
+    <p class="err" id="errMsg"></p>
+    <p style="position:absolute;bottom:calc(10px + env(safe-area-inset-bottom));font-size:11px;opacity:.45">versione 6 <span id="gpuInfo"></span></p>
+  </div>
+
+  <div id="scanning" class="hidden">
+    <div class="frame"><div class="line"></div></div>
+    <div class="txt">Inquadra la pagina del libro</div>
+  </div>
+
+  <div id="hint">Pizzica con due dita per ingrandire</div>
+  <button id="resetZoom">↺ Dimensione originale</button>
+
+  <div id="web" aria-hidden="true">
+    <div id="webBar">
+      <button id="backAR">← Torna alla realtà aumentata</button>
+      <a id="openExt" href="#" target="_blank" rel="noopener">Apri nel browser ↗</a>
+    </div>
+    <div id="webLoading">Caricamento…</div>
+  </div>
+
+  <!-- La scena viene creata dallo script (impostazioni diverse per Android e iPhone) -->
+  <template id="sceneTpl">
+  <a-scene
+    id="scene"
+    mindar-image="imageTargetSrc: ./targets.mind?v=6; autoStart: false; uiScanning: #scanning; uiLoading: no; uiError: no; filterMinCF: 0.0001; filterBeta: 0.001; warmupTolerance: 3; missTolerance: 12; maxTrack: 1"
+    renderer="colorManagement: false; antialias: true; alpha: true; precision: highp; logarithmicDepthBuffer: false"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false"
+    loading-screen="enabled: false">
+
+    <a-assets timeout="20000">
+      <img id="imgSalumi" src="./salumi-pagina.png?v=6" crossorigin="anonymous" />
+      <img id="imgLogo"   src="./logo-consorzio.png" crossorigin="anonymous" />
+      <img id="imgPanini" src="./panini.png?v=6" crossorigin="anonymous" />
+    </a-assets>
+
+    <a-camera position="0 0 0" look-controls="enabled: false" wasd-controls="enabled: false"></a-camera>
+
+    <!--
+      Sistema di coordinate del target: larghezza pagina = 1, altezza = 1712/985 = 1.738
+      Centro pagina = (0,0). Y positivo = verso l'alto.
+    -->
+    <a-entity id="anchor" mindar-image-target="targetIndex: 0">
+      <a-entity id="content">
+
+        <!-- 1) SALUMI: sovrapposti esattamente ai salumi stampati -->
+        <a-plane id="salumi"
+          width="1" height="1.7381" position="0 0 0.01"
+          material="shader: flat; src: #imgSalumi; transparent: false; alphaTest: 0.5; side: front">
+        </a-plane>
+
+        <!-- 2) LOGO: arriva dall'angolo in alto a destra ruotando e si posa sul logo stampato -->
+        <a-entity id="logoWrap" position="0.0045 0.3985 0.04">
+          <a-plane id="logo" class="clickable" data-url="https://welcome.salumitipicipiacentini.it/"
+            width="0.316" height="0.308"
+            visible="false"
+            material="shader: flat; src: #imgLogo; transparent: false; alphaTest: 0.5; side: front">
+          </a-plane>
+        </a-entity>
+
+        <!-- 3) PANINI: sotto i salumi, a sinistra -->
+        <a-plane id="panini" class="clickable" data-url="https://welcome.salumitipicipiacentini.it/"
+          width="0.58" height="0.3027" position="-0.19 -0.615 0.03" scale="0.001 0.001 0.001"
+          material="shader: flat; src: #imgPanini; transparent: false; alphaTest: 0.5; side: front">
+        </a-plane>
+
+        <!-- 4) RETTANGOLO ROSSO: di fianco ai panini (texture disegnata con il font della pagina) -->
+        <a-plane id="cta" class="clickable"
+          data-url="https://www.salumitipicipiacentini.it/ricette/index.jspeldoc?IdC=162&IdS=162&tipo_cliccato=0&tipo_padre=0&nav=1&css=ricette_dop.css&menu=1"
+          width="0.38" height="0.228" position="0.305 -0.635 0.03" scale="0.001 0.001 0.001"
+          material="shader: flat; transparent: false; alphaTest: 0.5; color: #ffffff">
+        </a-plane>
+
+        <!-- 5) MANI ANIMATE "clicca qui" (non cliccabili, solo indicazione) -->
+        <a-plane class="hand" data-for="logo"   width="0.12" height="0.12" position="0.10 0.32 0.07"
+          material="shader: flat; transparent: false; alphaTest: 0.5"></a-plane>
+        <a-plane class="hand" data-for="panini" width="0.12" height="0.12" position="-0.12 -0.69 0.07"
+          material="shader: flat; transparent: false; alphaTest: 0.5"></a-plane>
+        <a-plane class="hand" data-for="cta"    width="0.12" height="0.12" position="0.42 -0.715 0.07"
+          material="shader: flat; transparent: false; alphaTest: 0.5"></a-plane>
+
+      </a-entity>
+    </a-entity>
+  </a-scene>
+  </template>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ------------------------------------------------------------------
+     Riferimenti
+  ------------------------------------------------------------------ */
+  const IS_ANDROID = /Android/i.test(navigator.userAgent) || /[?&]glvideo/.test(location.search);
+  {
+    // crea la scena con le impostazioni corrette PRIMA che A-Frame la inizializzi
+    const tpl = document.getElementById('sceneTpl');
+    const frag = tpl.content.cloneNode(true);
+    const sc = frag.querySelector('a-scene');
+    if (IS_ANDROID) {
+      // canvas opaco (la fotocamera è disegnata nella scena) e niente antialiasing MSAA:
+      // su molte GPU Android (Mali / Xclipse) blending e MSAA producono colori neri.
+      sc.setAttribute('renderer', 'colorManagement: false; antialias: false; alpha: false; precision: highp');
+    }
+    tpl.parentNode.insertBefore(frag, tpl);
+  }
+  const sceneEl   = document.getElementById('scene');
+  const anchorEl  = document.getElementById('anchor');
+  const contentEl = document.getElementById('content');
+  const salumiEl  = document.getElementById('salumi');
+  const logoEl    = document.getElementById('logo');
+  const paniniEl  = document.getElementById('panini');
+  const ctaEl     = document.getElementById('cta');
+  const splash    = document.getElementById('splash');
+  const startBtn  = document.getElementById('startBtn');
+  const errMsg    = document.getElementById('errMsg');
+  const hint      = document.getElementById('hint');
+  const resetBtn  = document.getElementById('resetZoom');
+
+  let targetVisible = false;
+  let introPlayed   = false;
+  let lostTimer     = null;
+  const timers      = [];
+
+  /* ------------------------------------------------------------------
+     Texture del rettangolo rosso (disegnata su canvas con i font della pagina)
+  ------------------------------------------------------------------ */
+  async function buildCtaTexture() {
+    try {
+      await Promise.race([
+        Promise.all([
+          document.fonts.load('400 80px "Sorts Mill Goudy"'),
+          document.fonts.load('italic 400 80px "Sorts Mill Goudy"'),
+          document.fonts.load('700 30px "Montserrat"')
+        ]),
+        new Promise(r => setTimeout(r, 4000))
+      ]);
+    } catch (e) { /* si usa il font di riserva */ }
+
+    const W = 1000, H = 600, R = 34;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+
+    function rr(x, y, w, h, r) {
+      g.beginPath();
+      g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r);
+      g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r);
+      g.arcTo(x, y, x + w, y, r); g.closePath();
+    }
+
+    // fondo rosso (stesso rosso del logo) con leggera sfumatura
+    const grad = g.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#e2312f');
+    grad.addColorStop(1, '#b51a20');
+    rr(6, 6, W - 12, H - 12, R); g.fillStyle = grad; g.fill();
+
+    // filetto oro come i dettagli della pagina
+    rr(26, 26, W - 52, H - 52, R - 14);
+    g.lineWidth = 5; g.strokeStyle = '#e9cf8f'; g.stroke();
+
+    // testo
+    g.fillStyle = '#ffffff';
+    g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    g.shadowColor = 'rgba(0,0,0,0.25)'; g.shadowBlur = 6; g.shadowOffsetY = 3;
+
+    g.font = '400 92px "Sorts Mill Goudy", Georgia, "Times New Roman", serif';
+    g.fillText('Scopri tutte', W / 2, 175);
+    g.fillText('le nostre', W / 2, 275);
+    g.font = 'italic 400 104px "Sorts Mill Goudy", Georgia, "Times New Roman", serif';
+    g.fillText('ricette gourmet', W / 2, 390);
+
+    // pulsante "TOCCA QUI"
+    g.shadowColor = 'transparent';
+    const bw = 360, bh = 84, bx = (W - bw) / 2, by = 445;
+    rr(bx, by, bw, bh, bh / 2); g.fillStyle = '#ffffff'; g.fill();
+    g.fillStyle = '#c3202a';
+    g.font = '700 36px "Montserrat", Arial, sans-serif';
+    g.textBaseline = 'middle';
+    g.fillText('TOCCA QUI  ›', W / 2, by + bh / 2 + 2);
+
+    ctaEl.setAttribute('material', 'src', c.toDataURL('image/png'));
+  }
+
+  /* ------------------------------------------------------------------
+     Icona mano "clicca qui"
+  ------------------------------------------------------------------ */
+  const handEls = Array.from(document.querySelectorAll('.hand'));
+  function buildHandTexture() {
+    const N = 256, c = document.createElement('canvas');
+    c.width = N; c.height = N;
+    const g = c.getContext('2d');
+    // icona "touch_app" (24x24) disegnata in bianco con contorno scuro
+    const path = new Path2D('M9 11.24V7.5C9 6.12 10.12 5 11.5 5S14 6.12 14 7.5v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6c0-.83-.67-1.5-1.5-1.5S10 6.67 10 7.5v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.06.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z');
+    g.save();
+    g.translate(N / 2, N / 2); g.scale(N / 26, N / 26); g.translate(-12, -12);
+    g.lineJoin = 'round';
+    g.strokeStyle = 'rgba(30,15,10,0.95)'; g.lineWidth = 1.6; g.stroke(path);
+    g.fillStyle = '#ffffff'; g.fill(path);
+    g.restore();
+    const url = c.toDataURL('image/png');
+    handEls.forEach(h => h.setAttribute('material', 'src', url));
+  }
+  function handsVisible(on) {
+    handEls.forEach(h => { h.object3D.visible = on; });
+    if (!on) cancelTween('hands');
+  }
+  function startHands() {
+    handsVisible(true);
+    const base = handEls.map(h => h.object3D.position.clone());
+    const t0 = performance.now();
+    function loop(now) {
+      const t = ((now - t0) / 1000) % 1.3;               // un "tap" ogni 1,3 s
+      // movimento: si avvicina in diagonale verso l'oggetto, preme, torna indietro
+      const press = t < 0.45 ? ease.outCubic(t / 0.45) : t < 0.65 ? 1 : 1 - ease.outCubic((t - 0.65) / 0.65);
+      handEls.forEach((h, i) => {
+        const o = h.object3D;
+        o.position.set(base[i].x - 0.025 * press, base[i].y + 0.025 * press, base[i].z - 0.03 * press);
+        o.scale.setScalar(1 - 0.12 * press);
+      });
+      running.set('hands', requestAnimationFrame(loop));
+    }
+    running.set('hands', requestAnimationFrame(loop));
+  }
+
+  /* ------------------------------------------------------------------
+     Animazioni
+  ------------------------------------------------------------------ */
+  const ease = {
+    outCubic: t => 1 - Math.pow(1 - t, 3),
+    outBack:  t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
+    outQuart: t => 1 - Math.pow(1 - t, 4)
+  };
+  const running = new Map(); // el -> rafId
+
+  function tween(key, dur, delay, ease, onUpdate, onDone) {
+    cancelTween(key);
+    const start = performance.now() + delay;
+    function step(now) {
+      if (now < start) { running.set(key, requestAnimationFrame(step)); return; }
+      const t = Math.min(1, (now - start) / dur);
+      onUpdate(ease(t), t);
+      if (t < 1) running.set(key, requestAnimationFrame(step));
+      else { running.delete(key); onDone && onDone(); }
+    }
+    running.set(key, requestAnimationFrame(step));
+  }
+  function cancelTween(key) {
+    if (running.has(key)) { cancelAnimationFrame(running.get(key)); running.delete(key); }
+  }
+
+  function setOpacity(el, v) {
+    const mesh = el.getObject3D('mesh');
+    if (mesh && mesh.material) mesh.material.opacity = v;
+  }
+
+  // Posizione di partenza del logo: angolo in alto a destra, fuori dalla pagina
+  // (coordinate relative alla sua posizione finale)
+  const LOGO_FROM = { x: 0.95, y: 0.75, z: 0.25 };
+  const LOGO_SPINS = 2;                      // giri completi durante il volo
+
+  function resetScene() {
+    ['salumi', 'logo', 'panini', 'cta', 'pulse'].forEach(cancelTween);
+    handsVisible(false);
+    timers.splice(0).forEach(clearTimeout);
+    salumiEl.object3D.visible = false;
+    salumiEl.object3D.scale.setScalar(1);
+    salumiEl.object3D.position.set(0, 0, 0.01);
+    logoEl.object3D.visible = false;
+    logoEl.object3D.position.set(LOGO_FROM.x, LOGO_FROM.y, LOGO_FROM.z);
+    logoEl.object3D.rotation.set(0, 0, 0);
+    logoEl.object3D.scale.setScalar(0.25);
+    paniniEl.object3D.scale.setScalar(0.001);
+    ctaEl.object3D.scale.setScalar(0.001);
+  }
+
+  function playIntro() {
+    resetScene();
+    introPlayed = true;
+
+    // 1) Salumi: compaiono con un leggero "stacco" dalla pagina
+    salumiEl.object3D.visible = true;
+    tween('salumi', 900, 0, ease.outCubic, (e) => {
+      salumiEl.object3D.scale.setScalar(1 + 0.04 * Math.sin(e * Math.PI));
+      salumiEl.object3D.position.z = 0.01 + 0.03 * Math.sin(e * Math.PI);
+    });
+
+    // 2) Logo: dall'angolo destro, ruotando, fino al logo stampato
+    logoEl.object3D.visible = true;
+    tween('logo', 1900, 350, ease.outCubic, (e) => {
+      const o = logoEl.object3D;
+      // traiettoria leggermente curva (arco) per un volo più naturale
+      const inv = 1 - e;
+      o.position.x = LOGO_FROM.x * inv;
+      o.position.y = LOGO_FROM.y * inv + 0.12 * Math.sin(e * Math.PI);
+      o.position.z = LOGO_FROM.z * inv;
+      o.rotation.z = -Math.PI * 2 * LOGO_SPINS * inv;      // rotazione oraria, si ferma dritto
+      o.rotation.y = 0.6 * inv;                            // un tocco di prospettiva
+      o.scale.setScalar(0.25 + 0.75 * e);
+    }, () => {
+      // piccolo "atterraggio"
+      tween('logoLand', 380, 0, (t) => t, (t) => {
+        logoEl.object3D.scale.setScalar(1 + 0.06 * Math.sin(t * Math.PI));
+      });
+    });
+
+    // 3) Panini
+    tween('panini', 700, 1700, ease.outBack, (e) => {
+      paniniEl.object3D.scale.setScalar(Math.max(0.001, e));
+    });
+
+    // 4) Rettangolo rosso, poi leggera pulsazione per invitare al tocco
+    tween('cta', 700, 2000, ease.outBack, (e) => {
+      ctaEl.object3D.scale.setScalar(Math.max(0.001, e));
+    }, () => { startPulse(); startHands(); });
+
+    timers.push(setTimeout(showHint, 2800));
+  }
+
+  function startPulse() {
+    const t0 = performance.now();
+    function loop(now) {
+      const s = 1 + 0.035 * Math.sin((now - t0) / 1000 * Math.PI * 1.3);
+      ctaEl.object3D.scale.setScalar(s);
+      running.set('pulse', requestAnimationFrame(loop));
+    }
+    running.set('pulse', requestAnimationFrame(loop));
+  }
+
+  let hintShown = false;
+  function showHint() {
+    if (hintShown || !targetVisible) return;
+    hintShown = true;
+    hint.classList.add('show');
+    setTimeout(() => hint.classList.remove('show'), 3500);
+  }
+
+  /* ------------------------------------------------------------------
+     Eventi di tracking (con tolleranza: l'intro non riparte per micro-perdite)
+  ------------------------------------------------------------------ */
+  anchorEl.addEventListener('targetFound', () => {
+    targetVisible = true;
+    if (lostTimer) { clearTimeout(lostTimer); lostTimer = null; }
+    if (!introPlayed) playIntro();
+  });
+
+  anchorEl.addEventListener('targetLost', () => {
+    targetVisible = false;
+    // se la pagina resta fuori inquadratura per più di 2 s, l'animazione ripartirà al ritorno
+    lostTimer = setTimeout(() => { introPlayed = false; resetScene(); }, 2000);
+  });
+
+  /* ------------------------------------------------------------------
+     Stabilizzazione extra: smorzamento della posa (oltre al filtro One-Euro di MindAR)
+     Interpola la matrice del target per eliminare il tremolio residuo.
+  ------------------------------------------------------------------ */
+  /* ------------------------------------------------------------------
+     FIX ANDROID: texture senza formato sRGB e con mipmap RGBA standard.
+     Su molte GPU Android (Mali/Adreno) le mipmap delle texture sRGB
+     vengono generate NERE: le immagini viste piccole/lontane diventano nere.
+  ------------------------------------------------------------------ */
+  function fixTexture(mesh) {
+    if (!mesh || !mesh.material || !mesh.material.map) return;
+    const t = mesh.material.map;
+    if (t.userData.androidFixed) return;
+    t.colorSpace = THREE.NoColorSpace;          // formato RGBA8 normale
+    t.premultiplyAlpha = false;
+    t.unpackAlignment = 4;
+    mesh.material.transparent = false;          // nessun blending (causa del nero su Android)
+    mesh.material.alphaTest = 0.5;
+    mesh.material.depthWrite = true;
+    if (IS_ANDROID) {
+      // ogni pixel disegnato è completamente opaco: il browser non deve fondere nulla col video
+      mesh.material.onBeforeCompile = (sh) => {
+        sh.fragmentShader = sh.fragmentShader.replace(
+          '#include <dithering_fragment>',
+          '#include <dithering_fragment>\n  gl_FragColor.a = 1.0;');
+      };
+      mesh.material.customProgramCacheKey = () => 'opaque-android';
+    }
+    t.generateMipmaps = false;                  // NIENTE mipmap: su alcuni Android sono nere
+    t.minFilter = THREE.LinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.anisotropy = 1;
+    t.userData.androidFixed = true;
+    t.needsUpdate = true;
+    mesh.material.needsUpdate = true;
+  }
+  AFRAME.registerComponent('android-safe-texture', {
+    init() {
+      const apply = () => fixTexture(this.el.getObject3D('mesh'));
+      this.el.addEventListener('materialtextureloaded', apply);
+      this.el.addEventListener('object3dset', apply);
+      apply();
+    },
+    tick() {                                     // controllo leggero: se la texture cambia, la sistema
+      const m = this.el.getObject3D('mesh');
+      if (m && m.material && m.material.map && !m.material.map.userData.androidFixed) fixTexture(m);
+    }
+  });
+  document.querySelectorAll('#content a-plane').forEach(el => el.setAttribute('android-safe-texture', ''));
+
+  AFRAME.registerComponent('pose-smoother', {
+    schema: { alpha: { default: 0.38 } },      // 0 = molto morbido, 1 = nessuno smorzamento
+    init() {
+      const T = THREE;
+      this.cur  = { p: new T.Vector3(), q: new T.Quaternion(), s: new T.Vector3() };
+      this.tgt  = { p: new T.Vector3(), q: new T.Quaternion(), s: new T.Vector3() };
+      this.out  = new T.Matrix4();
+      this.has  = false;
+    },
+    tick(time, dt) {
+      const o = this.el.object3D;
+      if (!o.visible) { this.has = false; return; }
+      // MindAR assegna una NUOVA matrice ad ogni aggiornamento: la leggiamo come bersaglio
+      if (o.matrix !== this.out) {
+        o.matrix.decompose(this.tgt.p, this.tgt.q, this.tgt.s);
+        if (!this.has) {
+          this.cur.p.copy(this.tgt.p); this.cur.q.copy(this.tgt.q); this.cur.s.copy(this.tgt.s);
+          this.has = true;
+        }
+      }
+      // smorzamento indipendente dal frame-rate
+      const k = 1 - Math.pow(1 - this.data.alpha, Math.min(4, (dt || 16.7) / 16.7));
+      // movimenti grandi (es. spostamento rapido del telefono): segue subito, senza scia
+      const jump = this.cur.p.distanceTo(this.tgt.p) / Math.max(1e-6, this.tgt.s.x);
+      const a = jump > 0.35 ? 1 : k;
+      this.cur.p.lerp(this.tgt.p, a);
+      this.cur.s.lerp(this.tgt.s, a);
+      this.cur.q.slerp(this.tgt.q, a);
+      this.out.compose(this.cur.p, this.cur.q, this.cur.s);
+      o.matrix = this.out;
+      o.matrixWorldNeedsUpdate = true;
+    }
+  });
+  anchorEl.setAttribute('pose-smoother', '');
+
+  /* ------------------------------------------------------------------
+     Pinch-to-zoom con due dita + tocco sugli oggetti
+  ------------------------------------------------------------------ */
+  const MIN_Z = 0.6, MAX_Z = 3.5;
+  let zoom = 1;
+  const pointers = new Map();
+  let pinchStartDist = 0, pinchStartZoom = 1;
+  let gestureWasPinch = false, lastPinchEnd = 0;
+  let downX = 0, downY = 0, downT = 0;
+
+  function applyZoom(z) {
+    zoom = Math.min(MAX_Z, Math.max(MIN_Z, z));
+    contentEl.object3D.scale.setScalar(zoom);
+    resetBtn.classList.toggle('show', Math.abs(zoom - 1) > 0.05);
+  }
+  function dist() {
+    const p = [...pointers.values()];
+    return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+  }
+
+  window.addEventListener('pointerdown', (e) => {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      gestureWasPinch = false; downX = e.clientX; downY = e.clientY; downT = performance.now();
+    }
+    if (pointers.size === 2) {
+      gestureWasPinch = true;
+      pinchStartDist = dist(); pinchStartZoom = zoom;
+    }
+  }, { passive: true });
+
+  window.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2 && pinchStartDist > 0) {
+      applyZoom(pinchStartZoom * dist() / pinchStartDist);
+    }
+  }, { passive: true });
+
+  function endPointer(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStartDist = 0;
+    if (gestureWasPinch && pointers.size === 0) lastPinchEnd = performance.now();
+  }
+  window.addEventListener('pointerup', endPointer, { passive: true });
+  window.addEventListener('pointercancel', endPointer, { passive: true });
+
+  // Blocca lo zoom nativo di iOS Safari
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(ev =>
+    document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {           // blocca doppio-tap zoom
+    const now = Date.now();
+    if (now - lastTouchEnd < 300 && !splash.contains(e.target)) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+
+  resetBtn.addEventListener('click', (e) => { e.stopPropagation(); applyZoom(1); });
+
+  // Tocco = evento "click" (garantisce l'apertura del link su iOS e Android)
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+
+  window.addEventListener('click', (e) => {
+    if (splash.style.display !== 'none' || e.target === resetBtn) return;
+    if (webEl.classList.contains('open')) return;
+    if (gestureWasPinch || performance.now() - lastPinchEnd < 400) return;
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 18) return;
+    if (!targetVisible) return;
+
+    const cam = sceneEl.camera;
+    const canvas = sceneEl.canvas;
+    if (!cam || !canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    ndc.x =  ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(ndc, cam);
+
+    const objs = [];
+    document.querySelectorAll('.clickable').forEach(el => {
+      const m = el.getObject3D('mesh');
+      if (m && el.object3D.visible && el.object3D.scale.x > 0.5) { m.userData.el = el; objs.push(m); }
+    });
+    const hits = raycaster.intersectObjects(objs, false);
+    if (!hits.length) return;
+
+    // per immagini trasparenti: ignora i tocchi sulle zone vuote (scegli il primo pixel pieno)
+    const hit = hits.find(h => isOpaqueAt(h.object.userData.el, h.uv)) || null;
+    if (!hit) return;
+    openLink(hit.object.userData.el);
+  });
+
+  // controllo trasparenza del pixel toccato (così i bordi vuoti di logo/panini non sono cliccabili)
+  const alphaCache = new Map();
+  function isOpaqueAt(el, uv) {
+    if (el.id === 'cta' || !uv) return true;
+    const img = el.id === 'logo' ? document.getElementById('imgLogo') : document.getElementById('imgPanini');
+    if (!img || !img.naturalWidth) return true;
+    let ctx = alphaCache.get(img);
+    if (!ctx) {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      alphaCache.set(img, ctx);
+    }
+    // raggio di tolleranza: controlla un piccolo intorno del punto toccato
+    const x = Math.floor(uv.x * img.naturalWidth), y = Math.floor((1 - uv.y) * img.naturalHeight);
+    const r = 14;
+    try {
+      const d = ctx.getImageData(Math.max(0, x - r), Math.max(0, y - r), r * 2, r * 2).data;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 40) return true;
+      return false;
+    } catch (err) { return true; }
+  }
+
+  const webEl = document.getElementById('web');
+  let webFrame = null;
+  const webLoading = document.getElementById('webLoading');
+  const openExt = document.getElementById('openExt');
+  const backAR = document.getElementById('backAR');
+
+  function openLink(el) {
+    const url = el.dataset.url;
+    if (!url) return;
+    // feedback visivo
+    const o = el.object3D, base = o.scale.x;
+    tween('tap-' + el.id, 220, 0, t => t, (t) => o.scale.setScalar(base * (1 - 0.08 * Math.sin(t * Math.PI))));
+    if (navigator.vibrate) navigator.vibrate(15);
+    setTimeout(() => openWeb(url), 180);
+  }
+
+  function openWeb(url) {
+    openExt.href = url;
+    webLoading.style.display = 'block';
+    // iframe nuovo ad ogni apertura: così il tasto "indietro" funziona sempre correttamente
+    if (webFrame) webFrame.remove();
+    webFrame = document.createElement('iframe');
+    webFrame.id = 'webFrame';
+    webFrame.title = 'Sito Salumi DOP Piacentini';
+    webFrame.setAttribute('allow', 'fullscreen; clipboard-write');
+    webFrame.onload = () => { webLoading.style.display = 'none'; };
+    webFrame.src = url;
+    webEl.appendChild(webFrame);
+    webEl.classList.add('open');
+    webEl.setAttribute('aria-hidden', 'false');
+    // il tasto "indietro" di Android/iOS riporta all'AR
+    try { history.pushState({ web: true }, ''); } catch (e) {}
+    // mette in pausa il riconoscimento per non scaldare il telefono
+    const sys = sceneEl.systems['mindar-image-system'];
+    try { sys && sys.controller && sys.pause(true); } catch (e) {}
+  }
+
+  function closeWeb(fromHistory) {
+    if (!webEl.classList.contains('open')) return;
+    webEl.classList.remove('open');
+    webEl.setAttribute('aria-hidden', 'true');
+    if (webFrame) { webFrame.remove(); webFrame = null; }
+    const sys = sceneEl.systems['mindar-image-system'];
+    try { sys && sys.controller && sys.unpause(); } catch (e) {}
+    if (!fromHistory) { try { history.back(); } catch (e) {} }
+  }
+
+  backAR.addEventListener('click', (e) => { e.stopPropagation(); closeWeb(false); });
+  openExt.addEventListener('click', (e) => e.stopPropagation());
+  window.addEventListener('popstate', () => closeWeb(true));
+
+  /* ------------------------------------------------------------------
+     Avvio
+  ------------------------------------------------------------------ */
+  function showError(msg) {
+    errMsg.textContent = msg; errMsg.style.display = 'block';
+    startBtn.disabled = false; startBtn.textContent = 'Riprova';
+  }
+
+  async function start() {
+    startBtn.disabled = true; startBtn.textContent = 'Avvio fotocamera…';
+    if (!window.isSecureContext) {
+      showError('La pagina deve essere aperta in HTTPS (es. GitHub Pages).'); return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showError('Questo browser non supporta la fotocamera. Apri il link con Safari (iPhone) o Chrome (Android).'); return;
+    }
+    try {
+      errMsg.style.display = 'none';
+      startBtn.textContent = 'Caricamento…';
+      sceneEl.systems['mindar-image-system'].start();   // al termine MindAR emette "arReady"
+    } catch (err) {
+      console.error(err);
+      showError('Impossibile accedere alla fotocamera. Consenti l\'accesso nelle impostazioni del browser e riprova.');
+    }
+  }
+
+  function showGpu() {
+    try {
+      const gl = sceneEl.renderer.getContext();
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      const name = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      document.getElementById('gpuInfo').textContent = '· ' + name + (IS_ANDROID ? ' · A' : '');
+    } catch (e) {}
+  }
+
+  function ready() {
+    showGpu();
+    buildHandTexture();
+    resetScene();
+    buildCtaTexture();
+    startBtn.addEventListener('click', start);
+  }
+  if (sceneEl.hasLoaded) ready(); else sceneEl.addEventListener('loaded', ready);
+
+  // errori della fotocamera segnalati da MindAR
+  /* ------------------------------------------------------------------
+     FIX ANDROID (causa reale del nero):
+     su Chrome Android il canvas WebGL trasparente sopra l'elemento <video>
+     della fotocamera viene composto male (zone dello schermo nere).
+     Soluzione: il video viene disegnato DENTRO la scena WebGL come sfondo
+     (stesso ritaglio "cover" usato da MindAR) e il <video> HTML viene nascosto.
+     Su iPhone resta il metodo originale, che funziona già.
+  ------------------------------------------------------------------ */
+  let videoTex = null;
+
+  function fitVideoTexture() {
+    const sys = sceneEl.systems['mindar-image-system'];
+    const v = sys && sys.video;
+    if (!videoTex || !v || !v.videoWidth) return;
+    const cw = sys.container.clientWidth, ch = sys.container.clientHeight;
+    const o = v.videoWidth / v.videoHeight, r = cw / ch;
+    let w, h;                                    // dimensioni del video "a copertura" (come MindAR)
+    if (o > r) { h = ch; w = h * o; } else { w = cw; h = w / o; }
+    videoTex.repeat.set(cw / w, ch / h);
+    videoTex.offset.set((1 - cw / w) / 2, (1 - ch / h) / 2);
+    videoTex.needsUpdate = true;
+  }
+
+  function setupGLVideo() {
+    const sys = sceneEl.systems['mindar-image-system'];
+    const v = sys && sys.video;
+    if (!v) return;
+    videoTex = new THREE.Texture(v);            // aggiornata a mano ad ogni frame (vedi sotto)
+    videoTex.colorSpace = THREE.NoColorSpace;
+    videoTex.minFilter = THREE.LinearFilter;
+    videoTex.magFilter = THREE.LinearFilter;
+    videoTex.generateMipmaps = false;
+    sceneEl.object3D.background = videoTex;
+    const updateFrame = () => {
+      if (videoTex && v.readyState >= 2) videoTex.needsUpdate = true;
+      requestAnimationFrame(updateFrame);
+    };
+    requestAnimationFrame(updateFrame);
+    // il <video> resta attivo (serve al riconoscimento) ma non viene più composto dal browser
+    v.style.opacity = '0';
+    fitVideoTexture();
+    const refit = () => { fitVideoTexture(); setTimeout(fitVideoTexture, 350); };
+    window.addEventListener('resize', refit);
+    window.addEventListener('orientationchange', refit);
+  }
+
+  sceneEl.addEventListener('arReady', () => {
+    if (IS_ANDROID) { try { setupGLVideo(); } catch (e) { console.error(e); } }
+    splash.style.display = 'none';
+  });
+  sceneEl.addEventListener('arError', () => {
+    splash.style.display = 'flex';
+    showError('Impossibile avviare la fotocamera. Consenti l\'accesso alla fotocamera nelle impostazioni del browser e ricarica la pagina.');
+    startBtn.onclick = () => location.reload();
+  });
+
+  // pausa/ripresa quando l'app va in background (iOS ferma la camera)
+  document.addEventListener('visibilitychange', () => {
+    const sys = sceneEl.systems['mindar-image-system'];
+    if (!sys || splash.style.display !== 'none') return;
+    if (document.hidden) { try { sys.pause(true); } catch (e) {} }
+    else if (!webEl.classList.contains('open')) { try { sys.unpause(); } catch (e) {} }
+  });
+})();
+</script>
+</body>
+</html>
