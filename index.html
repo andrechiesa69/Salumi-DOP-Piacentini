@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#1a0f0a" />
+  <title>Salumi DOP Piacentini – AR</title>
+
+  <!-- Font simili a quelli della pagina stampata -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sorts+Mill+Goudy:ital@0;1&family=Montserrat:wght@600;700&display=swap" rel="stylesheet" />
+
+  <!-- Librerie incluse nel progetto: three.js (contenuto nel file di A-Frame) + MindAR -->
+  <script src="./aframe-1.5.0.min.js?v=8"></script>
+  <script src="./mindar-image-aframe-1.2.5.prod.js?v=8"></script>
+
+  <style>
+    html { background: #000; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden;
+      touch-action: none;                 /* niente zoom/scroll del browser: il pinch lo gestiamo noi */
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+      font-family: "Montserrat", system-ui, sans-serif;
+    }
+    #ar { position: fixed; inset: 0; overflow: hidden; background: #000; }
+    #ar video { position: absolute; top: 0; left: 0; z-index: 0; }
+    #ar canvas { position: absolute; top: 0; left: 0; z-index: 1; display: block; }
+
+    /* Schermata di avvio */
+    #splash {
+      position: fixed; inset: 0; z-index: 30;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 22px; padding: 24px; box-sizing: border-box; text-align: center;
+      background: radial-gradient(ellipse at center, #3a2418 0%, #120a06 75%);
+      color: #f3e7cf;
+    }
+    #splash img { width: 150px; height: 150px; }
+    #splash h1 {
+      margin: 0; font-family: "Sorts Mill Goudy", Georgia, serif; font-weight: 400;
+      font-size: 26px; line-height: 1.2;
+    }
+    #splash p { margin: 0; font-size: 14px; opacity: .85; max-width: 320px; line-height: 1.45; }
+    #startBtn {
+      appearance: none; border: 0; cursor: pointer;
+      background: #d2232a; color: #fff; font: 700 16px "Montserrat", sans-serif;
+      padding: 15px 34px; border-radius: 40px; letter-spacing: .5px;
+      box-shadow: 0 6px 20px rgba(210,35,42,.45);
+    }
+    #startBtn:disabled { opacity: .6; }
+    #splash .err { color: #ffb4a8; font-size: 13px; display: none; }
+
+    /* Overlay di scansione */
+    #scanning {
+      position: fixed; inset: 0; z-index: 10; pointer-events: none;
+      display: flex; align-items: center; justify-content: center; flex-direction: column;
+    }
+    #scanning.hidden { display: none; }
+    #scanning .frame {
+      width: 62vmin; height: 86vmin; max-width: 330px; max-height: 470px;
+      border: 2px solid rgba(255,255,255,.75); border-radius: 18px;
+      position: relative; overflow: hidden;
+      box-shadow: 0 0 0 9999px rgba(0,0,0,.25);
+    }
+    #scanning .line {
+      position: absolute; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, transparent, #d2232a, transparent);
+      animation: scan 2.2s ease-in-out infinite;
+    }
+    @keyframes scan { 0%{top:0} 50%{top:calc(100% - 3px)} 100%{top:0} }
+    #scanning .txt {
+      margin-top: 18px; color: #fff; font-size: 14px; font-weight: 600;
+      background: rgba(0,0,0,.55); padding: 8px 16px; border-radius: 20px;
+    }
+
+    /* Suggerimento pinch + pulsante reset zoom */
+    #hint {
+      position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom));
+      transform: translateX(-50%); z-index: 12;
+      color: #fff; font-size: 13px; font-weight: 600;
+      background: rgba(0,0,0,.55); padding: 8px 16px; border-radius: 20px;
+      opacity: 0; transition: opacity .5s; pointer-events: none; white-space: nowrap;
+    }
+    #hint.show { opacity: 1; }
+    #resetZoom {
+      position: fixed; right: 16px; top: calc(16px + env(safe-area-inset-top)); z-index: 12;
+      appearance: none; border: 0; border-radius: 22px;
+      background: rgba(0,0,0,.55); color: #fff; font: 600 13px "Montserrat", sans-serif;
+      padding: 9px 14px; display: none;
+    }
+    #resetZoom.show { display: block; }
+
+    /* Pannello con il sito + pulsante "Torna alla realtà aumentata" */
+    #web {
+      position: fixed; inset: 0; z-index: 50; background: #fff;
+      display: none; flex-direction: column;
+    }
+    #web.open { display: flex; }
+    #webBar {
+      flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+      padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+      background: #1a0f0a; box-shadow: 0 2px 10px rgba(0,0,0,.35);
+    }
+    #backAR {
+      flex: 1 1 auto; appearance: none; border: 0; cursor: pointer;
+      background: #d2232a; color: #fff; font: 700 15px "Montserrat", sans-serif;
+      padding: 13px 14px; border-radius: 30px; letter-spacing: .2px;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      box-shadow: 0 4px 14px rgba(210,35,42,.45);
+    }
+    #openExt {
+      flex: 0 0 auto; color: #f3e7cf; font: 600 12px "Montserrat", sans-serif;
+      text-decoration: none; padding: 10px 6px; white-space: nowrap;
+    }
+    #webFrame { flex: 1 1 auto; width: 100%; border: 0; background: #fff; }
+    #webLoading {
+      position: absolute; left: 0; right: 0; top: 50%; text-align: center;
+      color: #555; font: 600 14px "Montserrat", sans-serif; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Contenitore AR: video fotocamera + canvas 3D -->
+  <div id="ar"></div>
+
+  <!-- Avvio: serve un tocco dell'utente (iOS) per attivare la fotocamera -->
+  <div id="splash">
+    <img src="./logo-consorzio.png" alt="Consorzio Salumi DOP Piacentini" />
+    <h1>I grandi sapori<br/><em>delle terre piacentine</em></h1>
+    <p>Inquadra la pagina del libro con la fotocamera per scoprire i contenuti in realtà aumentata.</p>
+    <button id="startBtn">Avvia l'esperienza</button>
+    <p class="err" id="errMsg"></p>
+    <p style="position:absolute;bottom:calc(10px + env(safe-area-inset-bottom));font-size:11px;opacity:.45">versione 8 <span id="gpuInfo"></span></p>
+  </div>
+
+  <div id="scanning" class="hidden">
+    <div class="frame"><div class="line"></div></div>
+    <div class="txt">Inquadra la pagina del libro</div>
+  </div>
+
+  <div id="hint">Pizzica con due dita per ingrandire</div>
+  <button id="resetZoom">↺ Dimensione originale</button>
+
+  <div id="web" aria-hidden="true">
+    <div id="webBar">
+      <button id="backAR">← Torna alla realtà aumentata</button>
+      <a id="openExt" href="#" target="_blank" rel="noopener">Apri nel browser ↗</a>
+    </div>
+    <div id="webLoading">Caricamento…</div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ==================================================================
+     MOTORE AR: three.js + MindAR (senza A-Frame).
+     Su alcune GPU Android (es. Mali-G78) A-Frame rendeva nere le immagini;
+     three.js + MindAR usati direttamente funzionano su tutti i dispositivi.
+  ================================================================== */
+  const THREE = window.THREE;
+  const IS_ANDROID = /Android/i.test(navigator.userAgent) || /[?&]glvideo/.test(location.search);
+
+  const URL_WELCOME = 'https://welcome.salumitipicipiacentini.it/';
+  const URL_RICETTE = 'https://www.salumitipicipiacentini.it/ricette/index.jspeldoc?IdC=162&IdS=162&tipo_cliccato=0&tipo_padre=0&nav=1&css=ricette_dop.css&menu=1';
+  const V = '?v=8';
+
+  const arEl     = document.getElementById('ar');
+  const splash   = document.getElementById('splash');
+  const startBtn = document.getElementById('startBtn');
+  const errMsg   = document.getElementById('errMsg');
+  const scanning = document.getElementById('scanning');
+  const hint     = document.getElementById('hint');
+  const resetBtn = document.getElementById('resetZoom');
+
+  /* ------------------------------------------------------------------
+     Renderer, scena, camera
+  ------------------------------------------------------------------ */
+  const renderer = new THREE.WebGLRenderer({
+    antialias: !IS_ANDROID,          // su Android niente MSAA (più compatibile)
+    alpha: !IS_ANDROID,              // iPhone: canvas trasparente sopra il video
+    precision: 'highp',
+    powerPreference: 'high-performance'
+  });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setClearColor(0x000000, IS_ANDROID ? 1 : 0);
+  if ('outputColorSpace' in renderer) renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  arEl.appendChild(renderer.domElement);
+
+  const scene  = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 10, 100000);
+  scene.add(camera);
+
+  // info GPU nella schermata iniziale (utile per assistenza)
+  try {
+    const gl = renderer.getContext();
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    document.getElementById('gpuInfo').textContent = '· ' +
+      (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) + (IS_ANDROID ? ' · A' : ' · i');
+  } catch (e) {}
+
+  /* ------------------------------------------------------------------
+     Texture (metodo verificato su Mali-G78: immagine normale, niente mipmap)
+  ------------------------------------------------------------------ */
+  function prepTex(t) {
+    if ('colorSpace' in t) t.colorSpace = THREE.NoColorSpace;
+    t.generateMipmaps = false;
+    t.minFilter = THREE.LinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.needsUpdate = true;
+    return t;
+  }
+  function loadImg(src) {
+    return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+  }
+  function makePlane(w, h, tex) {
+    const mat = new THREE.MeshBasicMaterial({ map: tex || null, transparent: false, alphaTest: 0.5, side: THREE.FrontSide });
+    return new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+  }
+
+  /* ------------------------------------------------------------------
+     Contenuti AR
+     Coordinate del target: larghezza pagina = 1, altezza = 1712/985 = 1.738,
+     centro pagina = (0,0), Y verso l'alto.
+  ------------------------------------------------------------------ */
+  const anchor  = new THREE.Group();            // posa della pagina (da MindAR)
+  anchor.matrixAutoUpdate = false;
+  anchor.visible = false;
+  scene.add(anchor);
+  const content = new THREE.Group();            // per lo zoom con due dita
+  anchor.add(content);
+
+  const salumi = makePlane(1, 1.7381);
+  salumi.position.set(0, 0, 0.01);
+  content.add(salumi);
+
+  const logoWrap = new THREE.Group();
+  logoWrap.position.set(0.0045, 0.3985, 0.04);
+  content.add(logoWrap);
+  const logo = makePlane(0.316, 0.308);
+  logo.userData.url = URL_WELCOME;
+  logoWrap.add(logo);
+
+  const panini = makePlane(0.58, 0.3027);
+  panini.position.set(-0.19, -0.615, 0.03);
+  panini.userData.url = URL_WELCOME;
+  content.add(panini);
+
+  const ctaCanvas = document.createElement('canvas');
+  const ctaTex = prepTex(new THREE.CanvasTexture(ctaCanvas));
+  const cta = makePlane(0.38, 0.228, ctaTex);
+  cta.position.set(0.305, -0.635, 0.03);
+  cta.userData.url = URL_RICETTE;
+  content.add(cta);
+
+  const handCanvas = document.createElement('canvas');
+  const handTex = prepTex(new THREE.CanvasTexture(handCanvas));
+  const hands = [[0.10, 0.32], [-0.12, -0.69], [0.42, -0.715]].map(([x, y]) => {
+    const h = makePlane(0.12, 0.12, handTex);
+    h.position.set(x, y, 0.07);
+    content.add(h);
+    return h;
+  });
+
+  const clickables = [logo, panini, cta];
+  const images = {};
+
+  async function loadAssets() {
+    const [iS, iL, iP] = await Promise.all([
+      loadImg('./salumi-pagina.png' + V), loadImg('./logo-consorzio.png' + V), loadImg('./panini.png' + V)
+    ]);
+    images.logo = iL; images.panini = iP;
+    salumi.material.map = prepTex(new THREE.Texture(iS)); salumi.material.needsUpdate = true;
+    logo.material.map   = prepTex(new THREE.Texture(iL)); logo.material.needsUpdate = true;
+    panini.material.map = prepTex(new THREE.Texture(iP)); panini.material.needsUpdate = true;
+  }
+
+  /* ------------------------------------------------------------------
+     Rettangolo rosso (font come la pagina stampata) + icona mano
+  ------------------------------------------------------------------ */
+  function rr(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r); g.closePath();
+  }
+  function drawCta() {
+    const W = 1000, H = 600, R = 34;
+    ctaCanvas.width = W; ctaCanvas.height = H;
+    const g = ctaCanvas.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    const grad = g.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#e2312f'); grad.addColorStop(1, '#b51a20');
+    rr(g, 6, 6, W - 12, H - 12, R); g.fillStyle = grad; g.fill();
+    rr(g, 26, 26, W - 52, H - 52, R - 14); g.lineWidth = 5; g.strokeStyle = '#e9cf8f'; g.stroke();
+    g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    g.shadowColor = 'rgba(0,0,0,0.25)'; g.shadowBlur = 6; g.shadowOffsetY = 3;
+    g.font = '400 92px "Sorts Mill Goudy", Georgia, "Times New Roman", serif';
+    g.fillText('Scopri tutte', W / 2, 175);
+    g.fillText('le nostre', W / 2, 275);
+    g.font = 'italic 400 104px "Sorts Mill Goudy", Georgia, "Times New Roman", serif';
+    g.fillText('ricette gourmet', W / 2, 390);
+    g.shadowColor = 'transparent';
+    const bw = 360, bh = 84, bx = (W - bw) / 2, by = 445;
+    rr(g, bx, by, bw, bh, bh / 2); g.fillStyle = '#ffffff'; g.fill();
+    g.fillStyle = '#c3202a'; g.font = '700 36px "Montserrat", Arial, sans-serif'; g.textBaseline = 'middle';
+    g.fillText('TOCCA QUI  ›', W / 2, by + bh / 2 + 2);
+    ctaTex.needsUpdate = true;
+  }
+  async function buildCta() {
+    drawCta();                                   // subito, con font di riserva
+    try {
+      await Promise.race([
+        Promise.all([
+          document.fonts.load('400 80px "Sorts Mill Goudy"'),
+          document.fonts.load('italic 400 80px "Sorts Mill Goudy"'),
+          document.fonts.load('700 30px "Montserrat"')
+        ]),
+        new Promise(r => setTimeout(r, 4000))
+      ]);
+    } catch (e) {}
+    drawCta();                                   // ridisegna con i font della pagina
+  }
+  function drawHand() {
+    const N = 256; handCanvas.width = N; handCanvas.height = N;
+    const g = handCanvas.getContext('2d');
+    const path = new Path2D('M9 11.24V7.5C9 6.12 10.12 5 11.5 5S14 6.12 14 7.5v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6c0-.83-.67-1.5-1.5-1.5S10 6.67 10 7.5v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.06.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z');
+    g.save(); g.translate(N / 2, N / 2); g.scale(N / 26, N / 26); g.translate(-12, -12);
+    g.lineJoin = 'round'; g.strokeStyle = 'rgba(30,15,10,0.95)'; g.lineWidth = 1.6; g.stroke(path);
+    g.fillStyle = '#ffffff'; g.fill(path); g.restore();
+    handTex.needsUpdate = true;
+  }
+
+  /* ------------------------------------------------------------------
+     Animazioni
+  ------------------------------------------------------------------ */
+  const ease = {
+    outCubic: t => 1 - Math.pow(1 - t, 3),
+    outBack:  t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
+  };
+  const running = new Map();
+  function tween(key, dur, delay, ez, onUpdate, onDone) {
+    cancelTween(key);
+    const start = performance.now() + delay;
+    function step(now) {
+      if (now < start) { running.set(key, requestAnimationFrame(step)); return; }
+      const t = Math.min(1, (now - start) / dur);
+      onUpdate(ez(t), t);
+      if (t < 1) running.set(key, requestAnimationFrame(step));
+      else { running.delete(key); onDone && onDone(); }
+    }
+    running.set(key, requestAnimationFrame(step));
+  }
+  function cancelTween(key) {
+    if (running.has(key)) { cancelAnimationFrame(running.get(key)); running.delete(key); }
+  }
+
+  const LOGO_FROM = { x: 0.95, y: 0.75, z: 0.25 };   // angolo in alto a destra, fuori pagina
+  const LOGO_SPINS = 2;
+  const timers = [];
+  let introPlayed = false;
+
+  function handsVisible(on) {
+    hands.forEach(h => { h.visible = on; });
+    if (!on) cancelTween('hands');
+  }
+  function startHands() {
+    handsVisible(true);
+    const base = hands.map(h => h.position.clone());
+    const t0 = performance.now();
+    function loop(now) {
+      const t = ((now - t0) / 1000) % 1.3;
+      const press = t < 0.45 ? ease.outCubic(t / 0.45) : t < 0.65 ? 1 : 1 - ease.outCubic((t - 0.65) / 0.65);
+      hands.forEach((h, i) => {
+        h.position.set(base[i].x - 0.025 * press, base[i].y + 0.025 * press, base[i].z - 0.03 * press);
+        h.scale.setScalar(1 - 0.12 * press);
+      });
+      running.set('hands', requestAnimationFrame(loop));
+    }
+    running.set('hands', requestAnimationFrame(loop));
+  }
+  function resetHandPositions() {
+    [[0.10, 0.32], [-0.12, -0.69], [0.42, -0.715]].forEach(([x, y], i) => {
+      hands[i].position.set(x, y, 0.07); hands[i].scale.setScalar(1);
+    });
+  }
+
+  function resetScene() {
+    ['salumi', 'logo', 'logoLand', 'panini', 'cta', 'pulse'].forEach(cancelTween);
+    handsVisible(false); resetHandPositions();
+    timers.splice(0).forEach(clearTimeout);
+    salumi.visible = false; salumi.scale.setScalar(1); salumi.position.set(0, 0, 0.01);
+    logo.visible = false;
+    logo.position.set(LOGO_FROM.x, LOGO_FROM.y, LOGO_FROM.z);
+    logo.rotation.set(0, 0, 0);
+    logo.scale.setScalar(0.25);
+    panini.scale.setScalar(0.001);
+    cta.scale.setScalar(0.001);
+  }
+
+  function playIntro() {
+    resetScene();
+    introPlayed = true;
+
+    // 1) Salumi: compaiono con un leggero "stacco" dalla pagina
+    salumi.visible = true;
+    tween('salumi', 900, 0, ease.outCubic, (e) => {
+      salumi.scale.setScalar(1 + 0.04 * Math.sin(e * Math.PI));
+      salumi.position.z = 0.01 + 0.03 * Math.sin(e * Math.PI);
+    });
+
+    // 2) Logo: dall'angolo in alto a destra, ruotando, fino al logo stampato
+    logo.visible = true;
+    tween('logo', 1900, 350, ease.outCubic, (e) => {
+      const inv = 1 - e;
+      logo.position.x = LOGO_FROM.x * inv;
+      logo.position.y = LOGO_FROM.y * inv + 0.12 * Math.sin(e * Math.PI);
+      logo.position.z = LOGO_FROM.z * inv;
+      logo.rotation.z = -Math.PI * 2 * LOGO_SPINS * inv;
+      logo.rotation.y = 0.6 * inv;
+      logo.scale.setScalar(0.25 + 0.75 * e);
+    }, () => {
+      tween('logoLand', 380, 0, t => t, (t) => logo.scale.setScalar(1 + 0.06 * Math.sin(t * Math.PI)));
+    });
+
+    // 3) Panini
+    tween('panini', 700, 1700, ease.outBack, (e) => panini.scale.setScalar(Math.max(0.001, e)));
+
+    // 4) Rettangolo rosso, poi pulsazione + mani
+    tween('cta', 700, 2000, ease.outBack, (e) => cta.scale.setScalar(Math.max(0.001, e)),
+      () => { startPulse(); startHands(); });
+
+    timers.push(setTimeout(showHint, 2800));
+  }
+  function startPulse() {
+    const t0 = performance.now();
+    function loop(now) {
+      cta.scale.setScalar(1 + 0.035 * Math.sin((now - t0) / 1000 * Math.PI * 1.3));
+      running.set('pulse', requestAnimationFrame(loop));
+    }
+    running.set('pulse', requestAnimationFrame(loop));
+  }
+  let hintShown = false;
+  function showHint() {
+    if (hintShown || !targetVisible) return;
+    hintShown = true;
+    hint.classList.add('show');
+    setTimeout(() => hint.classList.remove('show'), 3500);
+  }
+
+  /* ------------------------------------------------------------------
+     Fotocamera + MindAR
+  ------------------------------------------------------------------ */
+  let video = null, controller = null, videoTex = null, postMatrix = null;
+  let targetVisible = false, lostTimer = null, arRunning = false;
+
+  // posa: bersaglio da MindAR + posa smorzata mostrata (stabilizzazione)
+  const tgt = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3(), has: false };
+  const cur = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3(), has: false };
+  const tmpM = new THREE.Matrix4();
+
+  function onTargetFound() {
+    targetVisible = true;
+    anchor.visible = true;
+    scanning.classList.add('hidden');
+    if (lostTimer) { clearTimeout(lostTimer); lostTimer = null; }
+    if (!introPlayed) playIntro();
+  }
+  function onTargetLost() {
+    targetVisible = false;
+    anchor.visible = false;
+    tgt.has = cur.has = false;
+    scanning.classList.remove('hidden');
+    lostTimer = setTimeout(() => { introPlayed = false; resetScene(); }, 2000);
+  }
+
+  function resize() {
+    const cw = arEl.clientWidth, ch = arEl.clientHeight;
+    renderer.setSize(cw, ch, true);
+    if (!video || !video.videoWidth || !controller) { camera.aspect = cw / ch; camera.updateProjectionMatrix(); return; }
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const o = vw / vh, r = cw / ch;
+    let w, h;                                       // video "a copertura" (come MindAR)
+    if (o > r) { h = ch; w = h * o; } else { w = cw; h = w / o; }
+    const P = controller.getProjectionMatrix();
+    camera.fov = 2 * Math.atan(1 / P[5] / h * ch) * 180 / Math.PI;
+    camera.near = P[14] / (P[10] - 1);
+    camera.far  = P[14] / (P[10] + 1);
+    camera.aspect = cw / ch;
+    camera.updateProjectionMatrix();
+    video.style.top = (-(h - ch) / 2) + 'px';
+    video.style.left = (-(w - cw) / 2) + 'px';
+    video.style.width = w + 'px';
+    video.style.height = h + 'px';
+    if (videoTex) {
+      videoTex.repeat.set(cw / w, ch / h);
+      videoTex.offset.set((1 - cw / w) / 2, (1 - ch / h) / 2);
+      videoTex.needsUpdate = true;
+    }
+  }
+
+  async function startAR() {
+    // 1) fotocamera posteriore
+    video = document.createElement('video');
+    video.setAttribute('autoplay', ''); video.setAttribute('muted', ''); video.setAttribute('playsinline', '');
+    video.muted = true; video.playsInline = true;
+    arEl.insertBefore(video, renderer.domElement);
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment' } });
+    video.srcObject = stream;
+    await new Promise((res) => { if (video.readyState >= 1) res(); else video.addEventListener('loadedmetadata', res, { once: true }); });
+    await video.play();
+    // MindAR legge le dimensioni dagli attributi del video
+    video.setAttribute('width', video.videoWidth);
+    video.setAttribute('height', video.videoHeight);
+
+    // 2) Android: la fotocamera viene disegnata come sfondo della scena 3D (un solo livello)
+    if (IS_ANDROID) {
+      videoTex = prepTex(new THREE.Texture(video));
+      scene.background = videoTex;
+      video.style.opacity = '0';
+    }
+
+    // 3) riconoscimento immagine (MindAR) con filtri di stabilizzazione
+    controller = new window.MINDAR.IMAGE.Controller({
+      inputWidth: video.videoWidth, inputHeight: video.videoHeight,
+      maxTrack: 1, filterMinCF: 0.0001, filterBeta: 0.001, missTolerance: 12, warmupTolerance: 3,
+      onUpdate: (d) => {
+        if (d.type !== 'updateMatrix') return;
+        if (d.worldMatrix === null) { if (targetVisible) onTargetLost(); return; }
+        const m = new THREE.Matrix4();
+        m.elements = [...d.worldMatrix];
+        m.multiply(postMatrix);
+        m.decompose(tgt.p, tgt.q, tgt.s);
+        tgt.has = true;
+        if (!targetVisible) onTargetFound();
+      }
+    });
+    resize();
+    const { dimensions } = await controller.addImageTargets('./targets.mind' + V);
+    const [tw, th] = dimensions[0];
+    postMatrix = new THREE.Matrix4().compose(
+      new THREE.Vector3(tw / 2, tw / 2 + (th - tw) / 2, 0), new THREE.Quaternion(), new THREE.Vector3(tw, tw, tw));
+    await controller.dummyRun(video);
+    resize();
+    splash.style.display = 'none';
+    scanning.classList.remove('hidden');
+    controller.processVideo(video);
+    arRunning = true;
+  }
+
+  /* ------------------------------------------------------------------
+     Ciclo di disegno (con smorzamento della posa)
+  ------------------------------------------------------------------ */
+  let lastT = performance.now();
+  function render(now) {
+    const dt = Math.min(100, now - lastT); lastT = now;
+    if (tgt.has && targetVisible) {
+      if (!cur.has) { cur.p.copy(tgt.p); cur.q.copy(tgt.q); cur.s.copy(tgt.s); cur.has = true; }
+      const k = 1 - Math.pow(1 - 0.38, dt / 16.7);
+      const jump = cur.p.distanceTo(tgt.p) / Math.max(1e-6, tgt.s.x);
+      const a = jump > 0.35 ? 1 : k;            // movimenti rapidi: segue subito
+      cur.p.lerp(tgt.p, a); cur.s.lerp(tgt.s, a); cur.q.slerp(tgt.q, a);
+      anchor.matrix.compose(cur.p, cur.q, cur.s);
+      anchor.matrixWorldNeedsUpdate = true;
+    }
+    if (videoTex && video && video.readyState >= 2) videoTex.needsUpdate = true;
+    renderer.render(scene, camera);
+    requestAnimationFrame(render);
+  }
+
+  /* ------------------------------------------------------------------
+     Pinch-to-zoom + tocco sugli oggetti
+  ------------------------------------------------------------------ */
+  const MIN_Z = 0.6, MAX_Z = 3.5;
+  let zoom = 1;
+  const pointers = new Map();
+  let pinchStartDist = 0, pinchStartZoom = 1, gestureWasPinch = false, lastPinchEnd = 0, downX = 0, downY = 0;
+
+  function applyZoom(z) {
+    zoom = Math.min(MAX_Z, Math.max(MIN_Z, z));
+    content.scale.setScalar(zoom);
+    resetBtn.classList.toggle('show', Math.abs(zoom - 1) > 0.05);
+  }
+  function dist() { const p = [...pointers.values()]; return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); }
+
+  window.addEventListener('pointerdown', (e) => {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) { gestureWasPinch = false; downX = e.clientX; downY = e.clientY; }
+    if (pointers.size === 2) { gestureWasPinch = true; pinchStartDist = dist(); pinchStartZoom = zoom; }
+  }, { passive: true });
+  window.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2 && pinchStartDist > 0) applyZoom(pinchStartZoom * dist() / pinchStartDist);
+  }, { passive: true });
+  function endPointer(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStartDist = 0;
+    if (gestureWasPinch && pointers.size === 0) lastPinchEnd = performance.now();
+  }
+  window.addEventListener('pointerup', endPointer, { passive: true });
+  window.addEventListener('pointercancel', endPointer, { passive: true });
+
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(ev =>
+    document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd < 300 && !splash.contains(e.target)) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
+
+  resetBtn.addEventListener('click', (e) => { e.stopPropagation(); applyZoom(1); });
+
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  window.addEventListener('click', (e) => {
+    if (splash.style.display !== 'none' || e.target === resetBtn) return;
+    if (webEl.classList.contains('open')) return;
+    if (gestureWasPinch || performance.now() - lastPinchEnd < 400) return;
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > 18) return;
+    if (!targetVisible) return;
+    const rect = renderer.domElement.getBoundingClientRect();
+    ndc.x =  ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    scene.updateMatrixWorld(true);
+    raycaster.setFromCamera(ndc, camera);
+    const objs = clickables.filter(o => o.visible && o.scale.x > 0.5);
+    const hits = raycaster.intersectObjects(objs, false);
+    const hit = hits.find(h => isOpaqueAt(h.object, h.uv));
+    if (hit) openLink(hit.object);
+  });
+
+  // i bordi trasparenti di logo e panini non sono cliccabili
+  const alphaCache = new Map();
+  function isOpaqueAt(obj, uv) {
+    if (obj === cta || !uv) return true;
+    const img = obj === logo ? images.logo : images.panini;
+    if (!img || !img.naturalWidth) return true;
+    let ctx = alphaCache.get(img);
+    if (!ctx) {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      alphaCache.set(img, ctx);
+    }
+    const x = Math.floor(uv.x * img.naturalWidth), y = Math.floor((1 - uv.y) * img.naturalHeight), r = 14;
+    try {
+      const d = ctx.getImageData(Math.max(0, x - r), Math.max(0, y - r), r * 2, r * 2).data;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 40) return true;
+      return false;
+    } catch (err) { return true; }
+  }
+
+  /* ------------------------------------------------------------------
+     Siti nel pannello con "Torna alla realtà aumentata"
+  ------------------------------------------------------------------ */
+  const webEl = document.getElementById('web');
+  const webLoading = document.getElementById('webLoading');
+  const openExt = document.getElementById('openExt');
+  const backAR = document.getElementById('backAR');
+  let webFrame = null;
+
+  function openLink(obj) {
+    const url = obj.userData.url;
+    if (!url) return;
+    const base = obj.scale.x;
+    tween('tap', 220, 0, t => t, (t) => obj.scale.setScalar(base * (1 - 0.08 * Math.sin(t * Math.PI))));
+    if (navigator.vibrate) navigator.vibrate(15);
+    setTimeout(() => openWeb(url), 180);
+  }
+  function openWeb(url) {
+    openExt.href = url;
+    webLoading.style.display = 'block';
+    if (webFrame) webFrame.remove();
+    webFrame = document.createElement('iframe');
+    webFrame.id = 'webFrame';
+    webFrame.title = 'Sito Salumi DOP Piacentini';
+    webFrame.setAttribute('allow', 'fullscreen; clipboard-write');
+    webFrame.onload = () => { webLoading.style.display = 'none'; };
+    webFrame.src = url;
+    webEl.appendChild(webFrame);
+    webEl.classList.add('open');
+    webEl.setAttribute('aria-hidden', 'false');
+    try { history.pushState({ web: true }, ''); } catch (e) {}
+    try { controller && controller.stopProcessVideo(); } catch (e) {}
+  }
+  function closeWeb(fromHistory) {
+    if (!webEl.classList.contains('open')) return;
+    webEl.classList.remove('open');
+    webEl.setAttribute('aria-hidden', 'true');
+    if (webFrame) { webFrame.remove(); webFrame = null; }
+    try { if (controller && video) { video.play(); controller.processVideo(video); } } catch (e) {}
+    if (!fromHistory) { try { history.back(); } catch (e) {} }
+  }
+  backAR.addEventListener('click', (e) => { e.stopPropagation(); closeWeb(false); });
+  openExt.addEventListener('click', (e) => e.stopPropagation());
+  window.addEventListener('popstate', () => closeWeb(true));
+
+  /* ------------------------------------------------------------------
+     Avvio
+  ------------------------------------------------------------------ */
+  function showError(msg) {
+    splash.style.display = 'flex';
+    errMsg.textContent = msg; errMsg.style.display = 'block';
+    startBtn.disabled = false; startBtn.textContent = 'Riprova';
+  }
+
+  startBtn.addEventListener('click', async () => {
+    if (arRunning) return;
+    startBtn.disabled = true; startBtn.textContent = 'Avvio fotocamera…';
+    errMsg.style.display = 'none';
+    if (!window.isSecureContext) { showError('La pagina deve essere aperta in HTTPS (es. GitHub Pages).'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showError('Questo browser non supporta la fotocamera. Apri il link con Safari (iPhone) o Chrome (Android).'); return;
+    }
+    try {
+      await assetsReady;
+      startBtn.textContent = 'Caricamento…';
+      await startAR();
+    } catch (err) {
+      console.error(err);
+      if (video && video.srcObject) { try { video.srcObject.getTracks().forEach(t => t.stop()); } catch (e) {} }
+      if (video) { video.remove(); video = null; }
+      showError('Impossibile avviare la fotocamera. Consenti l\'accesso alla fotocamera nelle impostazioni del browser e riprova.');
+    }
+  });
+
+  window.addEventListener('resize', () => { resize(); setTimeout(resize, 350); });
+  window.addEventListener('orientationchange', () => setTimeout(resize, 350));
+
+  document.addEventListener('visibilitychange', () => {
+    if (!controller || !video) return;
+    if (document.hidden) { try { controller.stopProcessVideo(); } catch (e) {} }
+    else if (!webEl.classList.contains('open')) { try { video.play(); controller.processVideo(video); } catch (e) {} }
+  });
+
+  drawHand();
+  buildCta();
+  resetScene();
+  resize();
+  const assetsReady = loadAssets().catch(err => { console.error(err); showError('Errore nel caricamento delle immagini. Ricarica la pagina.'); throw err; });
+  requestAnimationFrame(render);
+
+  // riferimenti per test/assistenza
+  window.__ar = { scene, camera, anchor, logo, panini, cta, salumi, hands, isVisible: () => targetVisible };
+})();
+</script>
+</body>
+</html>
